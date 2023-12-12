@@ -1,29 +1,41 @@
 ﻿using Azure.Data.Tables;
-using IATest.Models; // Importa el namespace de tu modelo
+using IATest.Models;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
-public class TableStorageService
+namespace ChatbotConsoleApp.Services
 {
-    private TableClient tableClient;
-
-    public TableStorageService(string connectionString, string tableName)
+    public class TableStorageService
     {
-        tableClient = new TableClient(connectionString, tableName);
-        tableClient.CreateIfNotExists();
-    }
+        private TableClient tableClient;
 
-    public async Task AddConversationAsync(string partitionKey, string userInput, string botResponse)
-    {
-        var conversation = new ConversationEntity
+        public TableStorageService(string connectionString, string tableName)
         {
-            PartitionKey = partitionKey,
-            RowKey = Guid.NewGuid().ToString(),
-            UserInput = userInput,
-            BotResponse = botResponse
-        };
+            tableClient = new TableClient(connectionString, tableName);
+            tableClient.CreateIfNotExists();
+        }
 
-        await tableClient.AddEntityAsync(conversation);
+        public async Task AddConversationAsync(ConversationEntity conversation)
+        {
+            await tableClient.AddEntityAsync(conversation);
+        }
+
+        public List<ConversationEntity> GetRecentMessages(string partitionKey)
+        {
+            var tenMinutesAgo = DateTime.UtcNow.AddMinutes(-10);
+            var filter = $"PartitionKey eq '{partitionKey}' and Timestamp ge datetime'{tenMinutesAgo:o}'";
+
+            // Execute the query asynchronously and retrieve all results
+            var query = tableClient.Query<ConversationEntity>(filter);
+            List<ConversationEntity> messages = new List<ConversationEntity>();
+
+            foreach (var page in query.AsPages())
+            {
+                messages.AddRange(page.Values);
+            }
+
+            return messages;
+        }
     }
-
 }
