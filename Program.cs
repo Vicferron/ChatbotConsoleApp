@@ -1,20 +1,24 @@
 ﻿using System;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using IATest.Models;
-using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
+using ChatbotConsoleApp.Models;
+using ChatbotConsoleApp.Services;
+using System.Collections.Generic;
+
 
 namespace ChatbotConsoleApp
 {
     class Program
     {
         static readonly HttpClient client = new HttpClient();
-        static TableClient tableClient;
         static IConfiguration Configuration;
         static string apiKey;
+        static TableStorageService tableStorageService; // Usa el servicio en lugar de TableClient
 
         static async Task Main(string[] args)
         {
@@ -28,8 +32,7 @@ namespace ChatbotConsoleApp
             string connectionString = Configuration["AzureStorage:ConnectionString"];
             string tableName = Configuration["AzureStorage:TableName"];
 
-            tableClient = new TableClient(connectionString, tableName);
-            await tableClient.CreateIfNotExistsAsync();
+            tableStorageService = new TableStorageService(connectionString, tableName); // Inicializar servicio
 
             while (true)
             {
@@ -51,16 +54,24 @@ namespace ChatbotConsoleApp
 
         static async Task<string> GetGpt3Response(string userInput)
         {
-            var requestBody = new
-            {
-                model = "gpt-3.5-turbo",
-                messages = new[]
+            var recentMessages = tableStorageService.GetRecentMessages("ChatPartition");
+            var messages = recentMessages.Select(m => new List<Message>
                 {
-                    new { role = "user", content = userInput }
-                }
+                    new Message { Role = "user", Content = m.UserInput },
+                    new Message { Role = "system", Content = m.BotResponse }
+                })
+                .SelectMany(m => m)
+                .ToList();
+
+            messages.Add(new Message { Role = "user", Content = userInput });
+
+            var requestBody = new Gpt3Request
+            {
+                Messages = messages
             };
 
-            var content = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
+            var jsonRequest = JsonConvert.SerializeObject(requestBody);
+            var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json"); 
             client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 
             var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
@@ -82,13 +93,13 @@ namespace ChatbotConsoleApp
         {
             var conversation = new ConversationEntity
             {
-                PartitionKey = "ChatPartition", // Can be replaced with a user identifier if needed
+                PartitionKey = "ChatPartition",
                 RowKey = Guid.NewGuid().ToString(),
                 UserInput = userInput,
                 BotResponse = botResponse
             };
 
-            await tableClient.AddEntityAsync(conversation);
+            await tableStorageService.AddConversationAsync(conversation);
         }
     }
 }
